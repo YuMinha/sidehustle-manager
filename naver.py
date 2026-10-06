@@ -65,6 +65,7 @@ def keyword_stats(keywords):
             "keyword": r["relKeyword"],
             "monthly_search": to_int(r["monthlyPcQcCnt"]) + to_int(r["monthlyMobileQcCnt"]),
             "comp_idx": r["compIdx"],
+            "ad_depth": r.get("plAvgDepth") or 0,  # 검색 결과에 붙는 광고 수. 상품 키워드는 보통 5 이상
         }
         for r in rows
     ]

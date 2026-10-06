@@ -7,6 +7,7 @@ import streamlit as st
 import collect
 import db
 import naver
+import recommend
 
 st.set_page_config(page_title="부업 관리", page_icon="💰", layout="wide")
 conn = st.cache_resource(db.connect)()
@@ -45,10 +46,50 @@ def edit_table(table, df, cols, config, disabled=(), prep=None, key=""):
         st.rerun()
 
 
-page = st.sidebar.radio("메뉴", ["대시보드", "키워드", "뉴스", "콘텐츠 캘린더", "성과 입력"])
+page = st.sidebar.radio("메뉴", ["오늘의 추천", "대시보드", "키워드", "뉴스", "콘텐츠 캘린더", "성과 입력"])
 st.title(page)
 
-if page == "대시보드":
+if page == "오늘의 추천":
+    st.caption("관심 분야에서 팔리는 상품 키워드 중 검색은 꾸준하고, 요즘 오르거나 성수기가 다가오는 것을 골라요. "
+               "매일 아침 자동 수집 때도 새로 뽑아요.")
+    cats = st.multiselect("관심 분야", list(recommend.CATEGORY_SEEDS), default=list(recommend.CATEGORY_SEEDS))
+    if st.button("추천 새로 받기", type="primary", disabled=not cats):
+        try:
+            with st.spinner("네이버에서 키워드를 훑는 중... (10초쯤 걸려요)"):
+                recommend.recommend(conn, cats)
+            st.session_state.ver = st.session_state.get("ver", 0) + 1
+        except Exception as e:
+            st.error(f"추천을 받지 못했어요: {e}")
+
+    recs = q("""SELECT id, keyword, category, reason, score, rec_date FROM recommendations
+                WHERE picked = 0 AND rec_date = (SELECT MAX(rec_date) FROM recommendations)
+                ORDER BY score DESC""")
+    if recs.empty:
+        st.info("아직 추천이 없어요. `추천 새로 받기`를 눌러 보세요.")
+    else:
+        st.subheader(f"{recs['rec_date'].iloc[0]} 추천")
+        recs.insert(0, "pick", False)
+        picked = st.data_editor(
+            recs.drop(columns="rec_date"), hide_index=True, key=f"recs-{st.session_state.get('ver', 0)}",
+            disabled=["keyword", "category", "reason", "score"],
+            column_config={
+                "id": None,
+                "pick": col.CheckboxColumn("쓸래요"),
+                "keyword": col.TextColumn("키워드"),
+                "category": col.TextColumn("분야"),
+                "reason": col.TextColumn("추천 이유", width="large"),
+                "score": col.NumberColumn("점수", format="%.1f"),
+            },
+        )
+        if st.button("고른 키워드로 글 만들기"):
+            ids = [int(i) for i in picked.loc[picked["pick"], "id"]]
+            if ids:
+                recommend.pick(conn, ids)
+                st.session_state.ver = st.session_state.get("ver", 0) + 1
+                st.success(f"{len(ids)}개를 키워드에 등록하고 콘텐츠 캘린더에 '기획' 글로 넣었어요.")
+                st.rerun()
+
+elif page == "대시보드":
     month = today.strftime("%Y-%m")
     m = q("""SELECT COALESCE(SUM(revenue_krw), 0) AS revenue,
                     COALESCE(SUM(views), 0)       AS views,

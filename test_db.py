@@ -5,6 +5,7 @@ import pandas as pd
 
 import collect
 import db
+import recommend
 
 conn = db.connect(":memory:")
 cols = ["keyword", "monthly_search", "product_count", "competition", "memo"]
@@ -45,5 +46,19 @@ assert collect.peak_months([(p, 10) for p in months]) == "연중"
 rising = [(p, 10) for p in months[:-1]] + [(months[-1], 25)]
 assert collect.trend_index(rising) == 2.5
 assert collect.trend_index(rising[:5]) is None
+
+# 추천 점수: 오르는 중·성수기 임박이면 높게, 경쟁 '높음'은 감점
+base = {"monthly_search": 10_000, "comp_idx": "중간"}
+assert recommend.score({**base, "trend_index": 2.0, "peak_soon": True}) > recommend.score(base)
+assert recommend.score({**base, "comp_idx": "높음"}) < recommend.score(base)
+assert recommend.score({**base, "trend_index": 9.0}) == recommend.score({**base, "trend_index": 2.0})  # 상한
+
+# 추천 고르기 → 키워드 + 기획 글
+conn.execute("""INSERT INTO recommendations (rec_date, keyword, monthly_search, comp_idx, score, reason)
+                VALUES ('2026-10-06', '전기요', 17130, '중간', 5.0, '테스트')""")
+recommend.pick(conn, [conn.execute("SELECT id FROM recommendations").fetchone()[0]])
+assert conn.execute("SELECT title, status FROM posts p JOIN keywords k ON k.id = p.keyword_id "
+                    "WHERE k.keyword = '전기요'").fetchone() == ("전기요 (제목 미정)", "기획")
+assert conn.execute("SELECT picked FROM recommendations").fetchone()[0] == 1
 
 print("ok")

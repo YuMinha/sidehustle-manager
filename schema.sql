@@ -33,6 +33,22 @@ CREATE TABLE IF NOT EXISTS keyword_snapshots (
     UNIQUE (keyword_id, checked_date)
 );
 
+-- 매일 뽑은 주제 추천
+CREATE TABLE IF NOT EXISTS recommendations (
+    id             INTEGER PRIMARY KEY,
+    rec_date       TEXT    NOT NULL,
+    keyword        TEXT    NOT NULL,
+    category       TEXT,
+    monthly_search INTEGER,
+    comp_idx       TEXT,
+    trend_index    REAL,
+    peak_months    TEXT,
+    score          REAL,
+    reason         TEXT,
+    picked         INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (rec_date, keyword)
+);
+
 -- 주제 찾기용 뉴스 제목 (기사 내용은 저장하지 않는다)
 CREATE TABLE IF NOT EXISTS news_items (
     id             INTEGER PRIMARY KEY,

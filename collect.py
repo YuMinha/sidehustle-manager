@@ -14,16 +14,20 @@ NEWS_TOPICS = ["품절 대란", "인기 상품", "신제품 출시", "여행 수
 BLOCKED_WORDS = ["사고", "사망", "참사", "화재", "재난", "지진", "부상", "숨져", "숨진", "실종", "피해", "붕괴"]
 
 
-def peak_months(series):
-    """월별 추이 → 평균보다 30% 이상 높은 달 상위 2개. 뚜렷한 성수기가 없으면 '연중'."""
+def peak_month_numbers(series):
+    """월별 추이 → 평균보다 30% 이상 높은 달 상위 2개 (숫자). 뚜렷한 성수기가 없으면 []."""
     by_month = {}
     for period, ratio in series:
         by_month.setdefault(int(period[5:7]), []).append(ratio)
     avg = {m: statistics.mean(v) for m, v in by_month.items()}
     overall = statistics.mean(avg.values()) if avg else 0
     top = sorted(avg, key=avg.get, reverse=True)[:2]
-    top = [m for m in top if overall and avg[m] >= overall * 1.3]
-    return ", ".join(f"{m}월" for m in sorted(top)) if top else "연중"
+    return sorted(m for m in top if overall and avg[m] >= overall * 1.3)
+
+
+def peak_months(series):
+    top = peak_month_numbers(series)
+    return ", ".join(f"{m}월" for m in top) if top else "연중"
 
 
 def trend_index(series):
@@ -89,5 +93,8 @@ def collect_news(conn):
 
 
 if __name__ == "__main__":
+    import recommend
+
     conn = db.connect()
-    print(f"키워드 {refresh_keywords(conn)}개 갱신, 새 뉴스 {collect_news(conn)}건")
+    print(f"키워드 {refresh_keywords(conn)}개 갱신, 새 뉴스 {collect_news(conn)}건, "
+          f"추천 {len(recommend.recommend(conn))}개")
