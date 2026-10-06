@@ -5,8 +5,12 @@ python collect.py   → 한 번 실행 (작업 스케줄러가 매일 이걸 실
 import datetime as dt
 import statistics
 
+from pathlib import Path
+
 import db
 import naver
+
+HERE = Path(__file__).parent
 
 # 상품 주제를 찾을 뉴스 검색어. 바꾸고 싶으면 여기만 고치면 된다.
 NEWS_TOPICS = ["품절 대란", "인기 상품", "신제품 출시", "여행 수요", "날씨 예보", "유행 아이템"]
@@ -54,6 +58,13 @@ def refresh_keywords(conn):
         for k, series in naver.monthly_trend([k for _, k in chunk]).items():
             trends[ids[norm(k)]] = series
 
+    blogs, blog_ok = {}, True
+    for i, k in rows:
+        count = naver.blog_count(k) if blog_ok else None
+        blog_ok = count is not None  # 블로그 검색 API가 없으면 한 번만 시도
+        if count is not None and stats.get(i, {}).get("monthly_search"):
+            blogs[i] = round(count / stats[i]["monthly_search"], 2)
+
     today = dt.date.today().isoformat()
     with conn:
         for i, _ in rows:
@@ -62,9 +73,10 @@ def refresh_keywords(conn):
             conn.execute(
                 """UPDATE keywords
                    SET monthly_search = COALESCE(?, monthly_search), comp_idx = COALESCE(?, comp_idx),
-                       peak_months = ?, trend_index = ?
+                       peak_months = ?, trend_index = ?, blog_ratio = COALESCE(?, blog_ratio)
                    WHERE id = ?""",
-                (s.get("monthly_search"), s.get("comp_idx"), peak_months(series) if series else None, ti, i),
+                (s.get("monthly_search"), s.get("comp_idx"), peak_months(series) if series else None, ti,
+                 blogs.get(i), i),
             )
             conn.execute(
                 """INSERT INTO keyword_snapshots (keyword_id, checked_date, monthly_search, comp_idx, trend_index)
@@ -92,9 +104,70 @@ def collect_news(conn):
     return added
 
 
+def collect_instagram(conn):
+    """인스타에 올린 글의 조회수를 가져와 stats에 하루치 증가분으로 남긴다."""
+    import instagram
+
+    rows = conn.execute("SELECT id, ig_media_id FROM posts WHERE ig_media_id IS NOT NULL").fetchall()
+    today = dt.date.today().isoformat()
+    with conn:
+        for post_id, media_id in rows:
+            total = instagram.insights(media_id).get("views", 0)
+            # 인스타는 누적값을 주므로, 지금까지 기록한 합계를 빼서 오늘 늘어난 만큼만 저장한다
+            conn.execute("DELETE FROM stats WHERE post_id = ? AND record_date = ? AND source = '인스타'", (post_id, today))
+            before = conn.execute("SELECT COALESCE(SUM(views), 0) FROM stats WHERE post_id = ? AND source = '인스타'",
+                                  (post_id,)).fetchone()[0]
+            conn.execute("INSERT INTO stats (post_id, record_date, views, source) VALUES (?, ?, ?, '인스타')",
+                         (post_id, today, max(total - before, 0)))
+    return len(rows)
+
+
+def import_revenue(conn, df, date_col, revenue_col, match_col, clicks_col=None):
+    """수익 리포트(엑셀/CSV) → stats. 각 행을 상품 URL 또는 키워드로 내 글과 맞춘다.
+    (맞춘 행 수, 못 맞춘 행 수)를 돌려준다."""
+    import pandas as pd
+
+    posts = conn.execute(
+        "SELECT p.id, p.product_url, k.keyword FROM posts p LEFT JOIN keywords k ON k.id = p.keyword_id").fetchall()
+
+    def find_post(text):
+        text = str(text)
+        for pid, url, kw in posts:
+            if url and (url in text or text in url):
+                return pid
+        for pid, url, kw in posts:
+            if kw and kw.replace(" ", "") in text.replace(" ", ""):
+                return pid
+        return None
+
+    d = pd.DataFrame({
+        "post_id": df[match_col].map(find_post),
+        "record_date": pd.to_datetime(df[date_col], errors="coerce").dt.date.astype(str),
+        "revenue_krw": pd.to_numeric(df[revenue_col].astype(str).str.replace(r"[^0-9.-]", "", regex=True),
+                                     errors="coerce").fillna(0),
+        "clicks": pd.to_numeric(df[clicks_col], errors="coerce").fillna(0) if clicks_col else 0,
+    })
+    matched = d.dropna(subset=["post_id"])
+    matched = matched[matched["record_date"] != "NaT"]
+    grouped = matched.groupby(["post_id", "record_date"], as_index=False)[["revenue_krw", "clicks"]].sum()
+    with conn:
+        for r in grouped.itertuples(index=False):
+            # 같은 날짜 파일을 다시 올려도 두 번 더해지지 않게, 그 날짜의 파일 기록은 바꿔 쓴다
+            conn.execute("DELETE FROM stats WHERE post_id = ? AND record_date = ? AND source = '파일'",
+                         (int(r.post_id), r.record_date))
+            conn.execute("""INSERT INTO stats (post_id, record_date, clicks, revenue_krw, source)
+                            VALUES (?, ?, ?, ?, '파일')""",
+                         (int(r.post_id), r.record_date, int(r.clicks), int(r.revenue_krw)))
+    return len(matched), len(d) - len(matched)
+
+
 if __name__ == "__main__":
     import recommend
 
     conn = db.connect()
-    print(f"키워드 {refresh_keywords(conn)}개 갱신, 새 뉴스 {collect_news(conn)}건, "
-          f"추천 {len(recommend.recommend(conn))}개")
+    print(dt.datetime.now().isoformat(timespec="minutes"))
+    print(f"키워드 {refresh_keywords(conn)}개 갱신, 새 뉴스 {collect_news(conn)}건")
+    top, warnings = recommend.recommend(conn)
+    print(f"추천 {len(top)}개", *warnings, sep="\n  ")
+    if naver.load_env().get("IG_ACCESS_TOKEN"):
+        print(f"인스타 성과 {collect_instagram(conn)}개 갱신")

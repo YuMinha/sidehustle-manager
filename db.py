@@ -6,15 +6,26 @@ import pandas as pd
 HERE = Path(__file__).parent
 
 
+# 예전 버전으로 만든 DB에 새로 붙일 컬럼
+MIGRATIONS = {
+    "keywords": [("comp_idx", "TEXT"), ("peak_months", "TEXT"), ("trend_index", "REAL"),
+                 ("blog_ratio", "REAL"), ("source_url", "TEXT")],
+    "posts": [("commission_rate", "REAL"), ("draft_body", "TEXT"), ("caption", "TEXT"),
+              ("shorts_script", "TEXT"), ("video_path", "TEXT"), ("ig_media_id", "TEXT")],
+    "stats": [("source", "TEXT")],
+    "recommendations": [("blog_ratio", "REAL"), ("source_url", "TEXT")],
+}
+
+
 def connect(path=HERE / "sidehustle.db"):
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
+    for table, columns in MIGRATIONS.items():
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for column, kind in columns:
+            if have and column not in have:  # 테이블이 아직 없으면 schema.sql이 새로 만든다
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
     conn.executescript((HERE / "schema.sql").read_text(encoding="utf-8"))
-    # 예전 버전으로 만든 DB에 새 컬럼 추가
-    have = {r[1] for r in conn.execute("PRAGMA table_info(keywords)")}
-    for column, kind in [("comp_idx", "TEXT"), ("peak_months", "TEXT"), ("trend_index", "REAL")]:
-        if column not in have:
-            conn.execute(f"ALTER TABLE keywords ADD COLUMN {column} {kind}")
     return conn
 
 

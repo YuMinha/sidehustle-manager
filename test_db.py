@@ -61,4 +61,36 @@ assert conn.execute("SELECT title, status FROM posts p JOIN keywords k ON k.id =
                     "WHERE k.keyword = '전기요'").fetchone() == ("전기요 (제목 미정)", "기획")
 assert conn.execute("SELECT picked FROM recommendations").fetchone()[0] == 1
 
+
+# 수익 리포트 가져오기: 상품 URL이나 키워드로 내 글과 맞추고, 같은 날짜를 다시 올려도 두 번 더하지 않는다
+import pandas as pd
+
+pid = conn.execute("SELECT id FROM posts").fetchone()[0]
+conn.execute("UPDATE posts SET product_url = 'https://brandconnect.naver.com/p/123' WHERE id = ?", (pid,))
+report = pd.DataFrame({
+    "일자": ["2026-10-01", "2026-10-01", "2026-10-02", "2026-10-02"],
+    "수익금": ["1,200원", "800", "500", "999"],
+    "상품": ["https://brandconnect.naver.com/p/123", "전기요 싱글", "전기요", "모르는 상품"],
+})
+assert collect.import_revenue(conn, report, "일자", "수익금", "상품") == (3, 1)
+collect.import_revenue(conn, report, "일자", "수익금", "상품")
+assert conn.execute("SELECT SUM(revenue_krw) FROM stats WHERE source = '파일'").fetchone()[0] == 2500
+
+# 뉴스 키워드: Claude가 돌려준 뉴스 번호를 기사 제목·링크로 바꾼다 (API 호출은 가짜로 대체)
+import ai
+
+ai._ask = lambda *a, **k: {"items": [{"keyword": "전기요", "news_index": 1}, {"keyword": "엉뚱", "news_index": 9}]}
+news = [{"title": "가을 날씨", "link": "a"}, {"title": "한파 예보", "link": "b"}]
+assert ai.news_keywords(news) == [{"keyword": "전기요", "title": "한파 예보", "link": "b"}]
+
+# 발행 막기: 직접 채울 자리가 남은 초안은 '발행'으로 못 바꾼다
+import sqlite3
+
+conn.execute("INSERT INTO posts (title, draft_body) VALUES ('초안', '본문 [직접 채우기: 써 본 느낌]')")
+try:
+    conn.execute("UPDATE posts SET status = '발행' WHERE title = '초안'")
+    raise AssertionError("발행이 막히지 않았다")
+except sqlite3.IntegrityError:
+    pass
+
 print("ok")

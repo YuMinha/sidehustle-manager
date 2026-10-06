@@ -102,6 +102,17 @@ def monthly_trend(keywords, today=None):
     return {r["title"]: [(d["period"], d["ratio"]) for d in r["data"]] for r in res["results"]}
 
 
+def blog_count(keyword):
+    """네이버 블로그에 이 키워드로 쓰인 글 수. API HUB에 블로그 검색이 없으면 None."""
+    try:
+        res = _hub("/search/v1/blog?" + urllib.parse.urlencode({"query": keyword, "display": 1}))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return None
+        raise
+    return res["total"]
+
+
 def news(query, display=30):
     """최신 뉴스 제목. [{title, link, pub_date}]"""
     res = _hub("/search/v1/news?" + urllib.parse.urlencode({"query": query, "display": display, "sort": "date"}))
