@@ -1,11 +1,18 @@
-"""네이버 검색광고 API로 키워드 월 검색량·경쟁정도를 가져온다.
+"""네이버 API 호출.
+
+- 검색광고 API: 키워드 월 검색량·경쟁정도·연관 키워드
+- NAVER API HUB: 검색어 트렌드(월별 추이), 뉴스 검색
 
 python naver.py 캠핑의자 텀블러   → 바로 확인
 """
 import base64
+import datetime as dt
+import email.utils
 import hashlib
 import hmac
+import html
 import json
+import re
 import sys
 import time
 import urllib.parse
@@ -13,6 +20,7 @@ import urllib.request
 from pathlib import Path
 
 ENV = Path(__file__).with_name(".env")
+HUB = "https://naverapihub.apigw.ntruss.com"
 
 
 def load_env():
@@ -61,6 +69,49 @@ def keyword_stats(keywords):
         for r in rows
     ]
     return sorted(out, key=lambda r: r["monthly_search"], reverse=True)
+
+
+def _hub(path, body=None):
+    env = load_env()
+    if not (env.get("NAVER_HUB_CLIENT_ID") and env.get("NAVER_HUB_CLIENT_SECRET")):
+        raise RuntimeError(".env에 NAVER API HUB 키 2개를 넣어 주세요.")
+    headers = {"X-NCP-APIGW-API-KEY-ID": env["NAVER_HUB_CLIENT_ID"],
+               "X-NCP-APIGW-API-KEY": env["NAVER_HUB_CLIENT_SECRET"]}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(HUB + path, data=data, headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as res:
+        return json.load(res)
+
+
+def monthly_trend(keywords, today=None):
+    """키워드(최대 5개)의 최근 3년 월별 검색 추이. {키워드: [ratio, ...]} (오래된 달 → 지난달)"""
+    today = today or dt.date.today()
+    end = today.replace(day=1) - dt.timedelta(days=1)  # 지난달 말일까지 (이번 달은 아직 덜 찼음)
+    start = end.replace(year=end.year - 3, day=1) + dt.timedelta(days=32)
+    body = {
+        "startDate": start.replace(day=1).isoformat(),
+        "endDate": end.isoformat(),
+        "timeUnit": "month",
+        "keywordGroups": [{"groupName": k, "keywords": [k]} for k in keywords[:5]],
+    }
+    res = _hub("/search-trend/v1/search", body)
+    return {r["title"]: [(d["period"], d["ratio"]) for d in r["data"]] for r in res["results"]}
+
+
+def news(query, display=30):
+    """최신 뉴스 제목. [{title, link, pub_date}]"""
+    res = _hub("/search/v1/news?" + urllib.parse.urlencode({"query": query, "display": display, "sort": "date"}))
+    return [
+        {
+            "title": html.unescape(re.sub(r"<[^>]+>", "", i["title"])),
+            "link": i["link"],
+            "pub_date": email.utils.parsedate_to_datetime(i["pubDate"]).date().isoformat(),
+        }
+        for i in res["items"]
+    ]
 
 
 if __name__ == "__main__":

@@ -2,3 +2,4 @@ sidehustle.db
 __pycache__/
 .claude/
 .env
+collect.log

@@ -4,6 +4,7 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
+import collect
 import db
 import naver
 
@@ -44,7 +45,7 @@ def edit_table(table, df, cols, config, disabled=(), prep=None, key=""):
         st.rerun()
 
 
-page = st.sidebar.radio("메뉴", ["대시보드", "키워드", "콘텐츠 캘린더", "성과 입력"])
+page = st.sidebar.radio("메뉴", ["대시보드", "키워드", "뉴스", "콘텐츠 캘린더", "성과 입력"])
 st.title(page)
 
 if page == "대시보드":
@@ -128,7 +129,8 @@ elif page == "키워드":
                 st.session_state.ver = st.session_state.get("ver", 0) + 1
                 st.rerun()
 
-    df = q("""SELECT k.id, k.keyword, k.monthly_search, k.comp_idx, k.product_count, k.competition,
+    df = q("""SELECT k.id, k.keyword, k.monthly_search, k.comp_idx, k.trend_index, k.peak_months,
+                     k.product_count, k.competition,
                      EXISTS (SELECT 1 FROM posts p WHERE p.keyword_id = k.id) AS used, k.memo
               FROM keywords k
               ORDER BY CASE k.comp_idx WHEN '낮음' THEN 0 WHEN '중간' THEN 1 WHEN '높음' THEN 2 ELSE 3 END,
@@ -138,18 +140,10 @@ elif page == "키워드":
     left, right = st.columns([3, 1])
     if left.toggle("안 쓴 키워드만"):
         df = df[~df["used"]]
-    if right.button("검색량 새로고침", help="저장된 키워드의 월 검색량·경쟁을 네이버에서 다시 가져와요"):
-        names = [r[0] for r in conn.execute("SELECT keyword FROM keywords")]
+    if right.button("키워드 새로고침", help="검색량·경쟁·상승세·성수기를 네이버에서 다시 가져와요. 매일 아침 자동으로도 돌아요"):
         try:
-            # ponytail: 5개씩 순서대로 호출, 키워드가 수백 개면 호출 간격 조절 필요
-            with conn:
-                for i in range(0, len(names), 5):
-                    for r in naver.keyword_stats(names[i:i + 5]):
-                        conn.execute(
-                            """UPDATE keywords SET monthly_search = ?, comp_idx = ?
-                               WHERE upper(replace(keyword, ' ', '')) = upper(?)""",
-                            (r["monthly_search"], r["comp_idx"], r["keyword"]),
-                        )
+            with st.spinner("네이버에서 가져오는 중..."):
+                collect.refresh_keywords(conn)
             st.session_state.ver = st.session_state.get("ver", 0) + 1
             st.rerun()
         except Exception as e:
@@ -168,12 +162,36 @@ elif page == "키워드":
             "keyword": col.TextColumn("키워드", required=True),
             "monthly_search": col.NumberColumn("월 검색량", format="%d"),
             "comp_idx": col.SelectboxColumn("경쟁", options=["낮음", "중간", "높음"], help="네이버 검색광고 경쟁정도"),
+            "trend_index": col.NumberColumn("상승세", format="%.2f", help="지난달 ÷ 최근 1년 평균. 1보다 크면 오르는 중"),
+            "peak_months": col.TextColumn("성수기", help="최근 3년 중 검색이 몰리는 달"),
             "product_count": col.NumberColumn("상품수", format="%d", help="판다랭크에서 본 값 (선택)"),
             "competition": col.NumberColumn("경쟁률", help="상품수 ÷ 월 검색량. 비우면 자동 계산", format="%.2f"),
             "used": col.CheckboxColumn("사용함", help="이 키워드로 쓴 글이 있음"),
             "memo": col.TextColumn("메모"),
         },
-        disabled=["used"], prep=fill_competition,
+        disabled=["used", "trend_index", "peak_months"], prep=fill_competition,
+    )
+
+elif page == "뉴스":
+    st.caption("상품 주제를 찾기 위한 최신 뉴스 제목이에요. 사고·재난 뉴스는 빼고 모아요. 기사 내용은 글에 옮기지 마세요.")
+    if st.button("지금 뉴스 모으기"):
+        try:
+            with st.spinner("뉴스 모으는 중..."):
+                st.toast(f"새 뉴스 {collect.collect_news(conn)}건")
+        except Exception as e:
+            st.error(f"가져오지 못했어요: {e}")
+    news = q("""SELECT pub_date, topic, title, link FROM news_items
+                WHERE pub_date >= date('now', 'localtime', '-7 days')
+                ORDER BY pub_date DESC, id DESC""")
+    topics = st.multiselect("검색어", collect.NEWS_TOPICS, default=collect.NEWS_TOPICS)
+    st.dataframe(
+        news[news["topic"].isin(topics)], hide_index=True,
+        column_config={
+            "pub_date": col.TextColumn("날짜"),
+            "topic": col.TextColumn("검색어"),
+            "title": col.TextColumn("제목", width="large"),
+            "link": col.LinkColumn("기사", display_text="열기"),
+        },
     )
 
 elif page == "콘텐츠 캘린더":

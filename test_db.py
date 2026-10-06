@@ -3,6 +3,7 @@ import datetime as dt
 
 import pandas as pd
 
+import collect
 import db
 
 conn = db.connect(":memory:")
@@ -35,5 +36,14 @@ assert planned == "2026-10-10" and published == dt.date.today().isoformat()
 conn.execute("INSERT INTO stats (post_id, record_date, revenue_krw) VALUES (1, '2026-10-11', 3000)")
 conn.execute("DELETE FROM posts")
 assert conn.execute("SELECT COUNT(*) FROM stats").fetchone()[0] == 0
+
+# 성수기·상승세 계산
+months = [f"{y}-{m:02d}-01" for y in (2024, 2025, 2026) for m in range(1, 13)]
+winter = [(p, 50 if p[5:7] in ("11", "12") else 10) for p in months]
+assert collect.peak_months(winter) == "11월, 12월"
+assert collect.peak_months([(p, 10) for p in months]) == "연중"
+rising = [(p, 10) for p in months[:-1]] + [(months[-1], 25)]
+assert collect.trend_index(rising) == 2.5
+assert collect.trend_index(rising[:5]) is None
 
 print("ok")

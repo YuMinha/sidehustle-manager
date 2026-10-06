@@ -16,8 +16,31 @@ CREATE TABLE IF NOT EXISTS keywords (
     product_count  INTEGER,
     competition    REAL,
     comp_idx       TEXT,  -- 검색광고 API 경쟁정도: 높음/중간/낮음
+    peak_months    TEXT,  -- 성수기 (예: '11월, 12월' 또는 '연중')
+    trend_index    REAL,  -- 지난달 검색 추이 ÷ 최근 1년 평균. 1보다 크면 오르는 중
     memo           TEXT,
     created_at     TEXT    NOT NULL DEFAULT (date('now', 'localtime'))
+);
+
+-- 매일 수집한 키워드 수치 (추이 분석용)
+CREATE TABLE IF NOT EXISTS keyword_snapshots (
+    id             INTEGER PRIMARY KEY,
+    keyword_id     INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+    checked_date   TEXT    NOT NULL,
+    monthly_search INTEGER,
+    comp_idx       TEXT,
+    trend_index    REAL,
+    UNIQUE (keyword_id, checked_date)
+);
+
+-- 주제 찾기용 뉴스 제목 (기사 내용은 저장하지 않는다)
+CREATE TABLE IF NOT EXISTS news_items (
+    id             INTEGER PRIMARY KEY,
+    topic          TEXT NOT NULL,
+    title          TEXT NOT NULL,
+    link           TEXT NOT NULL UNIQUE,
+    pub_date       TEXT NOT NULL,
+    collected_date TEXT NOT NULL DEFAULT (date('now', 'localtime'))
 );
 
 -- 글 (기획 → 작성중 → 발행)

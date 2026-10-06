@@ -10,9 +10,11 @@ def connect(path=HERE / "sidehustle.db"):
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript((HERE / "schema.sql").read_text(encoding="utf-8"))
-    # 1차 버전으로 만든 DB에 새 컬럼 추가
-    if "comp_idx" not in {r[1] for r in conn.execute("PRAGMA table_info(keywords)")}:
-        conn.execute("ALTER TABLE keywords ADD COLUMN comp_idx TEXT")
+    # 예전 버전으로 만든 DB에 새 컬럼 추가
+    have = {r[1] for r in conn.execute("PRAGMA table_info(keywords)")}
+    for column, kind in [("comp_idx", "TEXT"), ("peak_months", "TEXT"), ("trend_index", "REAL")]:
+        if column not in have:
+            conn.execute(f"ALTER TABLE keywords ADD COLUMN {column} {kind}")
     return conn
 
 
