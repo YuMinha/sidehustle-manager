@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS keywords (
     monthly_search INTEGER,
     product_count  INTEGER,
     competition    REAL,
+    comp_idx       TEXT,  -- 검색광고 API 경쟁정도: 높음/중간/낮음
     memo           TEXT,
     created_at     TEXT    NOT NULL DEFAULT (date('now', 'localtime'))
 );

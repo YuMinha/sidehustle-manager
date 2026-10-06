@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 import db
+import naver
 
 st.set_page_config(page_title="부업 관리", page_icon="💰", layout="wide")
 conn = st.cache_resource(db.connect)()
@@ -94,13 +95,65 @@ if page == "대시보드":
             st.info("성과 기록이 아직 없어요.")
 
 elif page == "키워드":
-    df = q("""SELECT k.id, k.keyword, k.monthly_search, k.product_count, k.competition,
+    with st.expander("연관 키워드 찾기 (네이버 검색광고)", expanded=True):
+        with st.form("related_form"):
+            seed = st.text_input("씨앗 키워드", placeholder="캠핑의자")
+            if st.form_submit_button("찾기") and seed:
+                try:
+                    st.session_state.related = naver.keyword_stats([seed])[:100]
+                except Exception as e:
+                    st.error(f"가져오지 못했어요: {e}")
+        if "related" in st.session_state:
+            rel = pd.DataFrame(st.session_state.related)
+            rel.insert(0, "add", False)
+            picked = st.data_editor(
+                rel, hide_index=True, key="related_table", disabled=["keyword", "monthly_search", "comp_idx"],
+                column_config={
+                    "add": col.CheckboxColumn("추가"),
+                    "keyword": col.TextColumn("키워드"),
+                    "monthly_search": col.NumberColumn("월 검색량", format="%d"),
+                    "comp_idx": col.TextColumn("경쟁"),
+                },
+            )
+            if st.button("선택한 키워드 추가", type="primary"):
+                rows = picked[picked["add"]]
+                with conn:
+                    conn.executemany(
+                        """INSERT INTO keywords (keyword, monthly_search, comp_idx) VALUES (?, ?, ?)
+                           ON CONFLICT (keyword) DO UPDATE
+                           SET monthly_search = excluded.monthly_search, comp_idx = excluded.comp_idx""",
+                        rows[["keyword", "monthly_search", "comp_idx"]].itertuples(index=False),
+                    )
+                del st.session_state.related
+                st.session_state.ver = st.session_state.get("ver", 0) + 1
+                st.rerun()
+
+    df = q("""SELECT k.id, k.keyword, k.monthly_search, k.comp_idx, k.product_count, k.competition,
                      EXISTS (SELECT 1 FROM posts p WHERE p.keyword_id = k.id) AS used, k.memo
               FROM keywords k
-              ORDER BY k.competition IS NULL, k.competition""")
+              ORDER BY CASE k.comp_idx WHEN '낮음' THEN 0 WHEN '중간' THEN 1 WHEN '높음' THEN 2 ELSE 3 END,
+                       k.monthly_search DESC""")
     df["used"] = df["used"].astype(bool)
-    if st.toggle("안 쓴 키워드만"):
+
+    left, right = st.columns([3, 1])
+    if left.toggle("안 쓴 키워드만"):
         df = df[~df["used"]]
+    if right.button("검색량 새로고침", help="저장된 키워드의 월 검색량·경쟁을 네이버에서 다시 가져와요"):
+        names = [r[0] for r in conn.execute("SELECT keyword FROM keywords")]
+        try:
+            # ponytail: 5개씩 순서대로 호출, 키워드가 수백 개면 호출 간격 조절 필요
+            with conn:
+                for i in range(0, len(names), 5):
+                    for r in naver.keyword_stats(names[i:i + 5]):
+                        conn.execute(
+                            """UPDATE keywords SET monthly_search = ?, comp_idx = ?
+                               WHERE upper(replace(keyword, ' ', '')) = upper(?)""",
+                            (r["monthly_search"], r["comp_idx"], r["keyword"]),
+                        )
+            st.session_state.ver = st.session_state.get("ver", 0) + 1
+            st.rerun()
+        except Exception as e:
+            st.error(f"가져오지 못했어요: {e}")
 
     def fill_competition(d):
         # 경쟁률을 비워 두면 상품수 ÷ 월 검색량으로 채운다
@@ -110,11 +163,12 @@ elif page == "키워드":
 
     edit_table(
         "keywords", df,
-        ["keyword", "monthly_search", "product_count", "competition", "memo"],
+        ["keyword", "monthly_search", "comp_idx", "product_count", "competition", "memo"],
         {
             "keyword": col.TextColumn("키워드", required=True),
             "monthly_search": col.NumberColumn("월 검색량", format="%d"),
-            "product_count": col.NumberColumn("상품수", format="%d"),
+            "comp_idx": col.SelectboxColumn("경쟁", options=["낮음", "중간", "높음"], help="네이버 검색광고 경쟁정도"),
+            "product_count": col.NumberColumn("상품수", format="%d", help="판다랭크에서 본 값 (선택)"),
             "competition": col.NumberColumn("경쟁률", help="상품수 ÷ 월 검색량. 비우면 자동 계산", format="%.2f"),
             "used": col.CheckboxColumn("사용함", help="이 키워드로 쓴 글이 있음"),
             "memo": col.TextColumn("메모"),

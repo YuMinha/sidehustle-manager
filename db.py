@@ -10,6 +10,9 @@ def connect(path=HERE / "sidehustle.db"):
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript((HERE / "schema.sql").read_text(encoding="utf-8"))
+    # 1차 버전으로 만든 DB에 새 컬럼 추가
+    if "comp_idx" not in {r[1] for r in conn.execute("PRAGMA table_info(keywords)")}:
+        conn.execute("ALTER TABLE keywords ADD COLUMN comp_idx TEXT")
     return conn
 
 
